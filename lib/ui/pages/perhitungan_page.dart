@@ -12,471 +12,527 @@ class PerhitunganPage extends StatefulWidget {
 }
 
 class _PerhitunganPageState extends State<PerhitunganPage> {
+  // Database helper untuk mengakses data
   final CriteriaSupplierDbHelper _dbHelper = CriteriaSupplierDbHelper();
+  
+  // Daftar data yang akan ditampilkan
   List<Criteria> _criteriaList = [];
   List<Supplier> _supplierList = [];
   List<Perhitungan> _perhitunganList = [];
-  List<Map<String, dynamic>> _fuzzyAHPResults =
-      []; // Hasil perhitungan Fuzzy AHP
-  List<Map<String, dynamic>> _recommendations = []; // Rekomendasi terbaik
+  
+  // Hasil perhitungan Fuzzy AHP
+  List<Map<String, dynamic>> _fuzzyAHPResults = [];
+  List<Map<String, dynamic>> _recommendations = [];
 
+  // State untuk form input
   int? _selectedCriteriaId;
   int? _selectedSupplierId;
   final _valueController = TextEditingController();
+  bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadData(); // Memuat data saat pertama kali halaman dibuka
   }
 
+  // Fungsi untuk memuat semua data dari database
   Future<void> _loadData() async {
-    List<Criteria> criteria = await _dbHelper.getAllCriteria();
-    List<Supplier> suppliers = await _dbHelper.getAllSupplier();
-    List<Perhitungan> perhitungan = await _dbHelper.getAllPerhitungan();
+    setState(() => _isLoading = true);
+    try {
+      final results = await Future.wait([
+        _dbHelper.getAllCriteria(),
+        _dbHelper.getAllSupplier(),
+        _dbHelper.getAllPerhitungan(),
+      ]);
 
-    setState(() {
-      _criteriaList = criteria;
-      _supplierList = suppliers;
-      _perhitunganList = perhitungan;
-    });
+      setState(() {
+        _criteriaList = results[0] as List<Criteria>;
+        _supplierList = results[1] as List<Supplier>;
+        _perhitunganList = results[2] as List<Perhitungan>;
+      });
+    } finally {
+      setState(() => _isLoading = false);
+    }
   }
 
+  // Fungsi untuk refresh data dengan pull-to-refresh
   Future<void> _refreshData() async {
-    await _loadData(); // Memuat ulang data saat refresh
+    // 1. Ambil data supplier terbaru terlebih dahulu
+    final suppliers = await _dbHelper.getAllSupplier();
+    
+    // 2. Update state dengan data terbaru
+    setState(() => _supplierList = suppliers);
+    
+    // 3. Muat ulang semua data
+    await _loadData();
+    
+    // 4. Beri feedback visual
+    _showSnackBar('Data telah diperbarui');
   }
 
-  // Fungsi untuk menghapus data perhitungan
-  Future<void> _deletePerhitungan(int id) async {
-    await _dbHelper.deletePerhitungan(id);
-    _loadData(); // Memuat ulang data setelah menghapus
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Perhitungan berhasil dihapus')),
+  // Fungsi untuk menyimpan perhitungan baru
+  Future<void> _savePerhitungan() async {
+    // Validasi input
+    if (_selectedCriteriaId == null || 
+        _selectedSupplierId == null || 
+        _valueController.text.isEmpty) {
+      _showSnackBar('Pilih kriteria, supplier, dan isi nilai terlebih dahulu');
+      return;
+    }
+
+    final value = int.tryParse(_valueController.text);
+    if (value == null || value < 1 || value > 9) {
+      _showSnackBar('Nilai harus bilangan bulat antara 1-9');
+      return;
+    }
+
+    // Buat objek perhitungan baru
+    final perhitungan = Perhitungan(
+      id: null,
+      idCriteria: _selectedCriteriaId!,
+      idSupplier: _selectedSupplierId!,
+      value: value.toDouble(),
+      timestamps: DateTime.now(),
     );
+
+    // Simpan ke database
+    await _dbHelper.insertPerhitungan(perhitungan);
+    
+    // Bersihkan form dan refresh data
+    _clearInputs();
+    await _refreshData();
+    _showSnackBar('Perhitungan berhasil disimpan');
   }
 
-  // Fungsi untuk mengedit data perhitungan
+  // Fungsi untuk mengedit perhitungan
   Future<void> _editPerhitungan(Perhitungan perhitungan) async {
     _selectedCriteriaId = perhitungan.idCriteria;
     _selectedSupplierId = perhitungan.idSupplier;
-    _valueController.text = perhitungan.value.toString();
+    _valueController.text = perhitungan.value.toInt().toString();
 
-    showDialog(
+    await showDialog(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Edit Perhitungan'),
-          content: Column(
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Perhitungan'),
+        content: SingleChildScrollView(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Dropdown untuk Kriteria
-              DropdownButtonFormField<int>(
-                value: _selectedCriteriaId,
-                items:
-                    _criteriaList.map((Criteria criteria) {
-                      return DropdownMenuItem<int>(
-                        value: criteria.id,
-                        child: Text(criteria.name),
-                      );
-                    }).toList(),
-                onChanged: (int? value) {
-                  setState(() {
-                    _selectedCriteriaId = value;
-                  });
-                },
-                decoration: const InputDecoration(
-                  labelText: 'Kriteria',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Dropdown untuk Supplier
-              DropdownButtonFormField<int>(
-                value: _selectedSupplierId,
-                items:
-                    _supplierList.map((Supplier supplier) {
-                      return DropdownMenuItem<int>(
-                        value: supplier.id,
-                        child: Text(supplier.name),
-                      );
-                    }).toList(),
-                onChanged: (int? value) {
-                  setState(() {
-                    _selectedSupplierId = value;
-                  });
-                },
-                decoration: const InputDecoration(
-                  labelText: 'Supplier',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Input Nilai Perhitungan
+              _buildCriteriaDropdown(),
+              const SizedBox(height: 16),
+              _buildSupplierDropdown(),
+              const SizedBox(height: 16),
               TextFormField(
                 controller: _valueController,
                 decoration: const InputDecoration(
-                  labelText: 'Masukkan Nilai',
+                  labelText: 'Nilai (1-9)',
                   border: OutlineInputBorder(),
                 ),
                 keyboardType: TextInputType.number,
+                validator: (value) {
+                  final num = int.tryParse(value ?? '');
+                  if (num == null || num < 1 || num > 9) {
+                    return 'Masukkan angka 1-9';
+                  }
+                  return null;
+                },
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context); // Tutup dialog
-              },
-              child: const Text('Batal'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Batal'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final value = int.tryParse(_valueController.text);
+              if (value == null || value < 1 || value > 9) {
+                _showSnackBar('Nilai harus antara 1-9');
+                return;
+              }
+
+              final updated = Perhitungan(
+                id: perhitungan.id,
+                idCriteria: _selectedCriteriaId!,
+                idSupplier: _selectedSupplierId!,
+                value: value.toDouble(),
+                timestamps: DateTime.now(),
+              );
+
+              await _dbHelper.updatePerhitungan(updated);
+              _clearInputs();
+              await _refreshData();
+              if (mounted) Navigator.pop(context);
+              _showSnackBar('Perhitungan berhasil diupdate');
+            },
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Fungsi untuk menghapus perhitungan
+  Future<void> _deletePerhitungan(int id) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus Perhitungan?'),
+        content: const Text('Data yang dihapus tidak dapat dikembalikan'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Hapus'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _dbHelper.deletePerhitungan(id);
+      await _refreshData();
+      _showSnackBar('Perhitungan berhasil dihapus');
+    }
+  }
+
+  // Fungsi untuk menghitung Fuzzy AHP
+  void _calculateFuzzyAHP() {
+    if (_perhitunganList.isEmpty) {
+      _showSnackBar('Tidak ada data perhitungan');
+      return;
+    }
+
+    // 1. Kelompokkan nilai per supplier
+    final Map<int, List<double>> supplierValues = {};
+    for (final p in _perhitunganList) {
+      supplierValues.putIfAbsent(p.idSupplier, () => []).add(p.value);
+    }
+
+    // 2. Hitung bobot (sederhana: bobot sama rata)
+    final weights = List.filled(_criteriaList.length, 1.0 / _criteriaList.length);
+
+    // 3. Hitung skor fuzzy
+    _fuzzyAHPResults = supplierValues.entries.map((entry) {
+      double score = 0.0;
+      for (int i = 0; i < entry.value.length && i < weights.length; i++) {
+        score += entry.value[i] * weights[i];
+      }
+      return {
+        'supplierId': entry.key,
+        'fuzzyScore': score,
+      };
+    }).toList();
+
+    // 4. Urutkan berdasarkan skor
+    _fuzzyAHPResults.sort((a, b) => b['fuzzyScore'].compareTo(a['fuzzyScore']));
+
+    // 5. Ambil 3 rekomendasi terbaik
+    _recommendations = _fuzzyAHPResults.take(3).toList();
+
+    setState(() {});
+    _showSnackBar('Perhitungan Fuzzy AHP selesai');
+  }
+
+  // Widget dropdown untuk memilih kriteria
+  Widget _buildCriteriaDropdown() {
+    return DropdownButtonFormField<int>(
+      value: _selectedCriteriaId,
+      items: _criteriaList.map((c) => DropdownMenuItem(
+        value: c.id,
+        child: Text(c.name),
+      )).toList(),
+      onChanged: (value) => setState(() => _selectedCriteriaId = value),
+      decoration: const InputDecoration(
+        labelText: 'Kriteria',
+        border: OutlineInputBorder(),
+      ),
+      validator: (value) => value == null ? 'Pilih kriteria' : null,
+    );
+  }
+
+  // Widget dropdown untuk memilih supplier
+  Widget _buildSupplierDropdown() {
+    return DropdownButtonFormField<int>(
+      value: _selectedSupplierId,
+      items: _supplierList.map((s) => DropdownMenuItem(
+        value: s.id,
+        child: Text(s.name),
+      )).toList(),
+      onChanged: (value) => setState(() => _selectedSupplierId = value),
+      decoration: const InputDecoration(
+        labelText: 'Supplier',
+        border: OutlineInputBorder(),
+      ),
+      validator: (value) => value == null ? 'Pilih supplier' : null,
+    );
+  }
+
+  // Widget form input perhitungan
+  Widget _buildInputForm() {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Input Perhitungan',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
-            TextButton(
-              onPressed: () async {
-                if (_selectedCriteriaId == null ||
-                    _selectedSupplierId == null ||
-                    _valueController.text.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'Pilih kriteria, supplier, dan isi nilai terlebih dahulu',
-                      ),
-                    ),
-                  );
-                  return;
+            const SizedBox(height: 16),
+            _buildCriteriaDropdown(),
+            const SizedBox(height: 16),
+            _buildSupplierDropdown(),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _valueController,
+              decoration: const InputDecoration(
+                labelText: 'Nilai (1-9)',
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                final num = int.tryParse(value ?? '');
+                if (num == null || num < 1 || num > 9) {
+                  return 'Masukkan angka 1-9';
                 }
-
-                Perhitungan updatedPerhitungan = Perhitungan(
-                  id: perhitungan.id,
-                  idCriteria: _selectedCriteriaId!,
-                  idSupplier: _selectedSupplierId!,
-                  value: double.parse(_valueController.text),
-                  timestamps: DateTime.now(),
-                );
-
-                await _dbHelper.updatePerhitungan(updatedPerhitungan);
-                _loadData(); // Memuat ulang data setelah mengedit
-                _valueController.clear(); // Membersihkan input nilai
-                setState(() {
-                  _selectedCriteriaId = null;
-                  _selectedSupplierId = null;
-                });
-
-                Navigator.pop(context); // Tutup dialog
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Perhitungan berhasil diupdate'),
-                  ),
-                );
+                return null;
               },
-              child: const Text('Simpan'),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _savePerhitungan,
+              child: const Text('Simpan Perhitungan'),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // Widget tabel data (untuk tampilan lebar)
+  Widget _buildDataTable() {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: DataTable(
+        columns: const [
+          DataColumn(label: Text('No')),
+          DataColumn(label: Text('Kriteria')),
+          DataColumn(label: Text('Supplier')),
+          DataColumn(label: Text('Nilai'), numeric: true),
+          DataColumn(label: Text('Aksi')),
+        ],
+        rows: _perhitunganList.asMap().entries.map((e) {
+          final p = e.value;
+          final criteria = _criteriaList.firstWhere(
+            (c) => c.id == p.idCriteria,
+            orElse: () => Criteria(id: -1, name: '-', weight: 0, timestamps: DateTime.now()),
+          );
+          final supplier = _supplierList.firstWhere(
+            (s) => s.id == p.idSupplier,
+            orElse: () => Supplier(id: -1, name: '-', contact: '', address: '', timestamps: DateTime.now()),
+          );
+
+          return DataRow(
+            cells: [
+              DataCell(Text('${e.key + 1}')),
+              DataCell(Text(criteria.name)),
+              DataCell(Text(supplier.name)),
+              DataCell(Text(p.value.toInt().toString())),
+              DataCell(
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, size: 20),
+                      onPressed: () => _editPerhitungan(p),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                      onPressed: () => _deletePerhitungan(p.id!),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  // Widget list data (untuk tampilan mobile)
+  Widget _buildMobileList() {
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: _perhitunganList.length,
+      itemBuilder: (context, index) {
+        final p = _perhitunganList[index];
+        final criteria = _criteriaList.firstWhere(
+          (c) => c.id == p.idCriteria,
+          orElse: () => Criteria(id: -1, name: '-', weight: 0, timestamps: DateTime.now()),
+        );
+        final supplier = _supplierList.firstWhere(
+          (s) => s.id == p.idSupplier,
+          orElse: () => Supplier(id: -1, name: '-', contact: '', address: '', timestamps: DateTime.now()),
+        );
+
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('No. ${index + 1}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text('Nilai: ${p.value.toInt()}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text('Kriteria: ${criteria.name}'),
+                Text('Supplier: ${supplier.name}'),
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, size: 20),
+                      onPressed: () => _editPerhitungan(p),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, size: 20, color: Colors.red),
+                      onPressed: () => _deletePerhitungan(p.id!),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
   }
 
-  // Fungsi untuk menghitung Fuzzy AHP
-  void _calculateFuzzyAHP() {
-    // 1. Normalisasi data
-    Map<int, List<double>> normalizedData = {};
-    for (var perhitungan in _perhitunganList) {
-      if (!normalizedData.containsKey(perhitungan.idSupplier)) {
-        normalizedData[perhitungan.idSupplier] = [];
-      }
-      normalizedData[perhitungan.idSupplier]!.add(perhitungan.value);
-    }
+  // Widget card rekomendasi
+  Widget _buildResultsCard() {
+    if (_recommendations.isEmpty) return const SizedBox();
 
-    // 2. Hitung bobot AHP (contoh sederhana, bobot sama untuk semua kriteria)
-    List<double> weights = List.filled(
-      _criteriaList.length,
-      1.0 / _criteriaList.length,
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Rekomendasi Terbaik',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            ..._recommendations.asMap().entries.map((e) {
+              final rank = e.key + 1;
+              final r = e.value;
+              final supplier = _supplierList.firstWhere(
+                (s) => s.id == r['supplierId'],
+                orElse: () => Supplier(id: -1, name: '-', contact: '', address: '', timestamps: DateTime.now()),
+              );
+
+              return ListTile(
+                leading: CircleAvatar(child: Text('$rank')),
+                title: Text(supplier.name),
+                trailing: Text(r['fuzzyScore'].toStringAsFixed(2)),
+              );
+            }),
+          ],
+        ),
+      ),
     );
+  }
 
-    // 3. Fuzzyfikasi dan perhitungan Fuzzy AHP
-    _fuzzyAHPResults = [];
-    normalizedData.forEach((supplierId, values) {
-      double fuzzyScore = 0.0;
-      for (int i = 0; i < values.length; i++) {
-        fuzzyScore += values[i] * weights[i];
-      }
-      _fuzzyAHPResults.add({
-        'supplierId': supplierId,
-        'fuzzyScore': fuzzyScore,
-      });
+  // Bersihkan input form
+  void _clearInputs() {
+    setState(() {
+      _selectedCriteriaId = null;
+      _selectedSupplierId = null;
+      _valueController.clear();
     });
+  }
 
-    // 4. Urutkan hasil Fuzzy AHP
-    _fuzzyAHPResults.sort((a, b) => b['fuzzyScore'].compareTo(a['fuzzyScore']));
-
-    // 5. Ambil 5 rekomendasi terbaik
-    _recommendations = _fuzzyAHPResults.take(5).toList();
-
-    setState(() {}); // Perbarui UI
+  // Tampilkan snackbar
+  void _showSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Perhitungan')),
-      body: RefreshIndicator(
-        onRefresh: _refreshData,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Dropdown untuk Kriteria
-              const Text(
-                'Pilih Kriteria',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              DropdownButtonFormField<int>(
-                value: _selectedCriteriaId,
-                items:
-                    _criteriaList.map((Criteria criteria) {
-                      return DropdownMenuItem<int>(
-                        value: criteria.id,
-                        child: Text(criteria.name),
-                      );
-                    }).toList(),
-                onChanged: (int? value) {
-                  setState(() {
-                    _selectedCriteriaId = value;
-                  });
-                },
-                decoration: const InputDecoration(
-                  labelText: 'Kriteria',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Dropdown untuk Supplier
-              const Text(
-                'Pilih Supplier',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              DropdownButtonFormField<int>(
-                value: _selectedSupplierId,
-                items:
-                    _supplierList.map((Supplier supplier) {
-                      return DropdownMenuItem<int>(
-                        value: supplier.id,
-                        child: Text(supplier.name),
-                      );
-                    }).toList(),
-                onChanged: (int? value) {
-                  setState(() {
-                    _selectedSupplierId = value;
-                  });
-                },
-                decoration: const InputDecoration(
-                  labelText: 'Supplier',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Input Nilai Perhitungan
-              const Text(
-                'Nilai Perhitungan',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              TextFormField(
-                controller: _valueController,
-                decoration: const InputDecoration(
-                  labelText: 'Masukkan Nilai',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-              ),
-              const SizedBox(height: 20),
-
-              // Tombol Simpan Perhitungan
-              ElevatedButton(
-                onPressed: () async {
-                  if (_selectedCriteriaId == null ||
-                      _selectedSupplierId == null ||
-                      _valueController.text.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'Pilih kriteria, supplier, dan isi nilai terlebih dahulu',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-
-                  Perhitungan perhitungan = Perhitungan(
-                    id: null,
-                    idCriteria: _selectedCriteriaId!,
-                    idSupplier: _selectedSupplierId!,
-                    value: double.parse(_valueController.text),
-                    timestamps: DateTime.now(),
-                  );
-
-                  await _dbHelper.insertPerhitungan(perhitungan);
-                  _loadData(); // Memuat ulang data setelah menyimpan
-                  _valueController.clear(); // Membersihkan input nilai
-                  setState(() {
-                    _selectedCriteriaId = null;
-                    _selectedSupplierId = null;
-                  });
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Perhitungan berhasil disimpan'),
-                    ),
-                  );
-                },
-                child: const Text('Simpan Perhitungan'),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Tabel Hasil Perhitungan
-              const Text(
-                'Hasil Perhitungan',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              DataTable(
-                columns: const [
-                  DataColumn(label: Text('Kriteria')),
-                  DataColumn(label: Text('Supplier')),
-                  DataColumn(label: Text('Nilai')),
-                  DataColumn(label: Text('Aksi')),
-                ],
-                rows:
-                    _perhitunganList.map((perhitungan) {
-                      // Cari nama kriteria berdasarkan ID
-                      String criteriaName =
-                          _criteriaList
-                              .firstWhere(
-                                (criteria) =>
-                                    criteria.id == perhitungan.idCriteria,
-                                orElse:
-                                    () => Criteria(
-                                      id: -1,
-                                      name: 'Unknown',
-                                      weight: 0,
-                                      type: '',
-                                      timestamps: DateTime.now(),
-                                    ),
-                              )
-                              .name;
-
-                      // Cari nama supplier berdasarkan ID
-                      String supplierName =
-                          _supplierList
-                              .firstWhere(
-                                (supplier) =>
-                                    supplier.id == perhitungan.idSupplier,
-                                orElse:
-                                    () => Supplier(
-                                      id: -1,
-                                      name: 'Unknown',
-                                      contact: '',
-                                      address: '',
-                                      timestamps: DateTime.now(),
-                                    ),
-                              )
-                              .name;
-
-                      return DataRow(
-                        cells: [
-                          DataCell(Text(criteriaName)),
-                          DataCell(Text(supplierName)),
-                          DataCell(Text(perhitungan.value.toString())),
-                          DataCell(
-                            Row(
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit),
-                                  onPressed:
-                                      () => _editPerhitungan(perhitungan),
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete),
-                                  onPressed:
-                                      () => _deletePerhitungan(perhitungan.id!),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      );
-                    }).toList(),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Tombol Hitung Fuzzy AHP
-              ElevatedButton(
-                onPressed: _calculateFuzzyAHP,
-                child: const Text('Hitung Fuzzy AHP'),
-              ),
-
-              const SizedBox(height: 20),
-
-              // Tabel Rekomendasi Fuzzy AHP
-              if (_recommendations.isNotEmpty)
-                const Text(
-                  'Rekomendasi Terbaik (Fuzzy AHP)',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              if (_recommendations.isNotEmpty)
-                DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Peringkat')),
-                    DataColumn(label: Text('Supplier')),
-                    DataColumn(label: Text('Skor Fuzzy AHP')),
-                  ],
-                  rows:
-                      _recommendations.asMap().entries.map((entry) {
-                        int rank = entry.key + 1;
-                        var recommendation = entry.value;
-                        String supplierName =
-                            _supplierList
-                                .firstWhere(
-                                  (supplier) =>
-                                      supplier.id ==
-                                      recommendation['supplierId'],
-                                  orElse:
-                                      () => Supplier(
-                                        id: -1,
-                                        name: 'Unknown',
-                                        contact: '',
-                                        address: '',
-                                        timestamps: DateTime.now(),
-                                      ),
-                                )
-                                .name;
-
-                        return DataRow(
-                          cells: [
-                            DataCell(Text(rank.toString())),
-                            DataCell(Text(supplierName)),
-                            DataCell(
-                              Text(
-                                recommendation['fuzzyScore'].toStringAsFixed(2),
-                              ),
-                            ),
-                          ],
-                        );
-                      }).toList(),
-                ),
-            ],
+      appBar: AppBar(
+        title: const Text('Perhitungan'),
+        actions: [
+          // Tombol refresh manual
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _refreshData,
+            tooltip: 'Refresh data',
           ),
-        ),
+        ],
       ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final isWide = constraints.maxWidth > 600;
+                
+                // Implementasi pull-to-refresh
+                return RefreshIndicator(
+                  onRefresh: _refreshData,
+                  child: SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildInputForm(),
+                        const SizedBox(height: 20),
+                        const Text(
+                          'Data Perhitungan',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 8),
+                        isWide ? _buildDataTable() : _buildMobileList(),
+                        const SizedBox(height: 20),
+                        ElevatedButton(
+                          onPressed: _calculateFuzzyAHP,
+                          child: const Text('Hitung Fuzzy AHP'),
+                        ),
+                        const SizedBox(height: 20),
+                        _buildResultsCard(),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
     );
+  }
+
+  @override
+  void dispose() {
+    _valueController.dispose();
+    super.dispose();
   }
 }

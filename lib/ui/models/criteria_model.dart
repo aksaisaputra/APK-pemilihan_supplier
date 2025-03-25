@@ -1,15 +1,14 @@
+// lib/ui/models/criteria_model.dart
 class Criteria {
-  int? id;
-  String name;
-  double weight;
-  String type; // 'benefit' atau 'cost'
-  DateTime timestamps;
+  final int? id;
+  final String name;
+  final double weight;
+  final DateTime timestamps;
 
   Criteria({
     this.id,
     required this.name,
     required this.weight,
-    required this.type,
     required this.timestamps,
   });
 
@@ -18,7 +17,6 @@ class Criteria {
       'id': id,
       'name': name,
       'weight': weight,
-      'type': type,
       'timestamps': timestamps.toIso8601String(),
     };
   }
@@ -28,8 +26,12 @@ class Criteria {
       id: map['id'],
       name: map['name'],
       weight: map['weight'],
-      type: map['type'],
       timestamps: DateTime.parse(map['timestamps']),
     );
+  }
+
+  @override
+  String toString() {
+    return 'Criteria(id: $id, name: $name, weight: $weight)';
   }
 }

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:pemilihan_supplier_apk/shared/shared_values.dart';
 import 'package:pemilihan_supplier_apk/ui/pages/register_page.dart';
-import 'package:pemilihan_supplier_apk/ui/pages/home_page.dart'; // Import HomePage
+import 'package:pemilihan_supplier_apk/ui/pages/home_page.dart';
 import 'package:pemilihan_supplier_apk/ui/widgets/text_field_custom.dart';
 import 'package:pemilihan_supplier_apk/ui/widgets/elevated_button_custom.dart';
 import 'package:pemilihan_supplier_apk/ui/helpers/database_helper.dart';
@@ -18,6 +18,45 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final DatabaseHelper _dbHelper = DatabaseHelper();
+  bool _isLoading = false;
+
+  Future<void> _login() async {
+    if (emailController.text.isEmpty || passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Email dan Password tidak boleh kosong')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final user = await _dbHelper.getUser(emailController.text);
+      
+      if (user == null || user.password != passwordController.text) {
+        throw Exception('Email atau Password Salah');
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Login Berhasil')),
+      );
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const HomePage()),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -40,45 +79,21 @@ class _LoginPageState extends State<LoginPage> {
               TextFieldCustom(
                 label: "Email Address",
                 controller: emailController,
+                keyboardType: TextInputType.emailAddress,
+                hintText: "contoh@email.com",
               ),
+              const SizedBox(height: 16),
               TextFieldCustom(
                 label: "Password",
-                obsecureText: true,
+                obscureText: true,
                 controller: passwordController,
+                hintText: "Masukkan password",
               ),
+              const SizedBox(height: 24),
               ElevatedButtonCustom(
                 label: 'Sign In',
-                onPressed: () async {
-                  if (emailController.text.isEmpty ||
-                      passwordController.text.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Email dan Password tidak boleh kosong'),
-                      ),
-                    );
-                    return;
-                  }
-
-                  User? user = await _dbHelper.getUser(emailController.text);
-                  if (user != null &&
-                      user.password == passwordController.text) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Login Berhasil')),
-                    );
-
-                    // Pindah ke HomePage setelah login berhasil
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (context) => const HomePage()),
-                    );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Email atau Password Salah'),
-                      ),
-                    );
-                  }
-                },
+                isLoading: _isLoading,
+                onPressed: _login,
               ),
               const SizedBox(height: 69),
               Row(
@@ -106,5 +121,12 @@ class _LoginPageState extends State<LoginPage> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
   }
 }

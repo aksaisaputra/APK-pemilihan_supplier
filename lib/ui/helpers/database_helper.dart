@@ -16,7 +16,7 @@ class DatabaseHelper {
   }
 
   Future<Database> _initDatabase() async {
-    String path = join(await getDatabasesPath(), 'user_database.db');
+    final path = join(await getDatabasesPath(), 'user_database.db');
     return await openDatabase(
       path,
       version: 1,
@@ -28,33 +28,52 @@ class DatabaseHelper {
     await db.execute('''
       CREATE TABLE users(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE,
-        password TEXT
+        email TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL
       )
     ''');
 
-    // Tambahkan akun default admin
+    // Akun admin default
     await db.insert('users', {
-      'email': 'admin@gmail.com',
-      'password': 'admin1234',
+      'email': 'admin@example.com',
+      'password': 'admin123',
     });
   }
 
   Future<int> insertUser(User user) async {
-    Database db = await database;
-    return await db.insert('users', user.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    if (!User.isValidEmail(user.email)) {
+      throw FormatException('Format email tidak valid');
+    }
+
+    final db = await database;
+    try {
+      return await db.insert(
+        'users',
+        user.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.fail,
+      );
+    } on DatabaseException catch (e) {
+      if (e.isUniqueConstraintError()) {
+        throw Exception('Email sudah terdaftar');
+      }
+      rethrow;
+    }
   }
 
   Future<User?> getUser(String email) async {
-    Database db = await database;
-    List<Map<String, dynamic>> maps = await db.query(
+    final db = await database;
+    final maps = await db.query(
       'users',
       where: 'email = ?',
       whereArgs: [email],
+      limit: 1,
     );
-    if (maps.isNotEmpty) {
-      return User.fromMap(maps.first);
-    }
+    if (maps.isNotEmpty) return User.fromMap(maps.first);
     return null;
+  }
+
+  Future<void> close() async {
+    final db = await database;
+    await db.close();
   }
 }

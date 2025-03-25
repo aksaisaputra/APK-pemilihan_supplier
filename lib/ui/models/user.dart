@@ -5,6 +5,15 @@ class User {
 
   User({this.id, required this.email, required this.password});
 
+  // Validasi format email
+  static bool isValidEmail(String email) {
+    final emailRegex = RegExp(
+      r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$',
+      caseSensitive: false,
+    );
+    return emailRegex.hasMatch(email);
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'id': id,

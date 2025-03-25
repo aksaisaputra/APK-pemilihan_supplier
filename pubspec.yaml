@@ -31,6 +31,7 @@ dependencies:
   flutter:
     sdk: flutter
   google_fonts: ^6.2.1
+  flutter_launcher_icons: ^0.13.1
   sqflite: ^2.0.0+4
   path_provider: ^2.1.5
   path: ^1.8.0
@@ -40,6 +41,13 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   flutter_test:
     sdk: flutter
+
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons1.png" # Warna latar adaptive icon
+  min_sdk_android: 21
 
 
 # For information on the generic Dart part of this file, see the
